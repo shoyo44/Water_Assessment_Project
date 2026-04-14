@@ -1,0 +1,29 @@
+# Secrets
+serviceAccountKey.json
+*.pem
+*.key
+*.p12
+*.pfx
+.env
+.env.*
+back_end/.env
+front_end/.env
+!.env.example
+!back_end/.env.example
+!front_end/.env.example
+
+# Logs
+*.log
+*.err.log
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Frontend deps and build output
+front_end/node_modules/
+front_end/dist/
+
+# Local editor / OS files
+.DS_Store
+Thumbs.db
