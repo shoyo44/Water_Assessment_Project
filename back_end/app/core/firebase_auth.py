@@ -47,9 +47,10 @@ async def verify_firebase_token(authorization: str | None = Header(default=None)
     token = authorization.removeprefix("Bearer ").strip()
 
     try:
-        return auth.verify_id_token(token)
+        return auth.verify_id_token(token, clock_skew_seconds=10)
     except Exception as exc:
+        print(f"Firebase token verification failed: {exc}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired Firebase token.",
+            detail=f"Invalid or expired Firebase token: {str(exc)}",
         ) from exc

@@ -7,12 +7,15 @@ import {
   logout,
   type AuthUser,
 } from './firebase'
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  PieChart, Pie, Cell
+} from 'recharts'
 import './app.css'
 
 type AppStage = 'intro' | 'login' | 'app'
-type View = 'setup' | 'entry' | 'dashboard' | 'analytics' | 'reuse' | 'reports'
+type View = 'dashboard' | 'setup' | 'entry' | 'reuse' | 'reports'
 type ApiStatus = 'checking' | 'online' | 'offline'
-type LiveStatus = 'idle' | 'connecting' | 'live' | 'offline'
 
 type Hostel = {
   id: string
@@ -29,7 +32,6 @@ type ConsumptionRecord = {
   timestamp: string
   bath_l: number
   laundry_l: number
-  drinking_l: number
   kitchen_l: number
   other_l: number
   total_l: number
@@ -57,22 +59,7 @@ type CalculationResult = {
   computed_at: string
 }
 
-type DailyPoint = {
-  date: string
-  total_l: number
-}
 
-type WeeklyPoint = {
-  year: number
-  week: number
-  total_l: number
-}
-
-type CategoryBreakdown = {
-  total_l: number
-  split_l: Record<string, number>
-  split_pct: Record<string, number>
-}
 
 type Recommendation = {
   id: string
@@ -94,21 +81,13 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
 const API_PREFIX = '/api/v1'
 
 const navItems: Array<{ id: View; label: string; eyebrow: string }> = [
+  { id: 'dashboard', label: 'Dashboard', eyebrow: 'Analytics' },
   { id: 'setup', label: 'Setup', eyebrow: 'Hostel' },
   { id: 'entry', label: 'Add Data', eyebrow: 'Input' },
-  { id: 'dashboard', label: 'Dashboard', eyebrow: 'Live' },
-  { id: 'analytics', label: 'Analytics', eyebrow: 'Charts' },
   { id: 'reuse', label: 'Reuse', eyebrow: 'Savings' },
   { id: 'reports', label: 'Reports', eyebrow: 'Export' },
 ]
 
-const categoryLabels = {
-  bath: 'Bath',
-  laundry: 'Laundry',
-  drinking: 'Drinking',
-  kitchen: 'Kitchen',
-  other: 'Other',
-}
 
 async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -156,27 +135,27 @@ function toDateTimeLocal(date = new Date()) {
 
 export function App() {
   const [stage, setStage] = useState<AppStage>('intro')
-  const [view, setView] = useState<View>('setup')
+  const [view, setView] = useState<View>('dashboard')
   const [user, setUser] = useState<AuthUser | null>(null)
   const [authReady, setAuthReady] = useState(false)
   const [authError, setAuthError] = useState('')
   const [apiStatus, setApiStatus] = useState<ApiStatus>('checking')
-  const [liveStatus, setLiveStatus] = useState<LiveStatus>('idle')
   const [hostel, setHostel] = useState<Hostel | null>(null)
   const [hasStudentCount, setHasStudentCount] = useState(false)
   const [records, setRecords] = useState<ConsumptionRecord[]>([])
-  const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [calculation, setCalculation] = useState<CalculationResult | null>(null)
-  const [dailySeries, setDailySeries] = useState<DailyPoint[]>([])
-  const [weeklySeries, setWeeklySeries] = useState<WeeklyPoint[]>([])
-  const [categoryBreakdown, setCategoryBreakdown] = useState<CategoryBreakdown | null>(null)
   const [reuse, setReuse] = useState<ReuseResponse | null>(null)
-  const [notice, setNotice] = useState('Create a hostel to start tracking water usage.')
+  const [csvUploadResult, setCsvUploadResult] = useState<{ inserted: number; skipped: number; errors: { row: number; error: string }[] } | null>(null)
+  const [notice, setNotice] = useState('Welcome! Please sign in to view your dashboard.')
   const [loadingAction, setLoadingAction] = useState('')
+
+  const [dashboardSummary, setDashboardSummary] = useState<any>(null)
+  const [chartData, setChartData] = useState<any>(null)
+  const [categoryBreakdown, setCategoryBreakdown] = useState<any>(null)
 
   const hasConsumption = records.length > 0
   const canCalculate = Boolean(hostel?.id && hasStudentCount && hasConsumption)
-  const canUseCalculatedFeatures = Boolean(hostel?.id && (summary || calculation))
+  const canUseCalculatedFeatures = Boolean(hostel?.id && calculation)
 
   useEffect(() => {
     checkHealth()
@@ -196,41 +175,31 @@ export function App() {
 
     setHasStudentCount(true)
     setRecords([])
-    setSummary(null)
     setCalculation(null)
-    setDailySeries([])
-    setWeeklySeries([])
-    setCategoryBreakdown(null)
     setReuse(null)
+    setDashboardSummary(null)
+    setChartData(null)
+    setCategoryBreakdown(null)
 
     void refreshRecords(hostel.id)
+    void refreshDashboard(hostel.id)
   }, [hostel?.id])
 
-  useEffect(() => {
-    if (!hostel?.id || view !== 'dashboard') {
-      setLiveStatus(hostel?.id ? 'idle' : 'offline')
-      return
+  async function refreshDashboard(hostelId = hostel?.id) {
+    if (!hostelId) return
+    try {
+      const sum = await apiRequest<any>(`${API_PREFIX}/dashboard/${hostelId}/summary`).catch(() => null)
+      if (sum) setDashboardSummary(sum)
+      const charts = await apiRequest<any>(`${API_PREFIX}/charts/${hostelId}/daily?days=30`).catch(() => null)
+      if (charts) setChartData(charts)
+      const breakdown = await apiRequest<any>(`${API_PREFIX}/charts/${hostelId}/category-breakdown`).catch(() => null)
+      if (breakdown) setCategoryBreakdown(breakdown)
+    } catch(e) {
+      // Ignore if not calculated yet
     }
+  }
 
-    setLiveStatus('connecting')
-    const wsBase = API_BASE.replace('https://', 'wss://').replace('http://', 'ws://')
-    const socket = new WebSocket(`${wsBase}${API_PREFIX}/dashboard/ws/live?hostel_id=${hostel.id}`)
 
-    socket.onopen = () => setLiveStatus('live')
-    socket.onerror = () => setLiveStatus('offline')
-    socket.onclose = () => setLiveStatus('offline')
-    socket.onmessage = (event) => {
-      const payload = JSON.parse(event.data)
-      if (payload.type === 'dashboard_summary') {
-        setSummary(payload.data)
-      }
-      if (payload.type === 'warning') {
-        setNotice(payload.detail)
-      }
-    }
-
-    return () => socket.close()
-  }, [hostel?.id, view])
 
   const totalPreview = useMemo(
     () => records.reduce((sum, item) => sum + item.total_l, 0),
@@ -276,23 +245,7 @@ export function App() {
     setRecords(data)
   }
 
-  async function refreshDashboard(hostelId = hostel?.id) {
-    if (!hostelId) return
-    const data = await apiRequest<DashboardSummary>(`${API_PREFIX}/dashboard/${hostelId}/summary`)
-    setSummary(data)
-  }
 
-  async function refreshCharts(hostelId = hostel?.id) {
-    if (!hostelId) return
-    const [daily, weekly, category] = await Promise.all([
-      apiRequest<{ series: DailyPoint[] }>(`${API_PREFIX}/charts/${hostelId}/daily?days=7`),
-      apiRequest<{ series: WeeklyPoint[] }>(`${API_PREFIX}/charts/${hostelId}/weekly?weeks=4`),
-      apiRequest<CategoryBreakdown>(`${API_PREFIX}/charts/${hostelId}/category-breakdown`),
-    ])
-    setDailySeries(daily.series)
-    setWeeklySeries(weekly.series)
-    setCategoryBreakdown(category)
-  }
 
   async function createHostel(event: Event) {
     event.preventDefault()
@@ -328,32 +281,39 @@ export function App() {
     }
   }
 
-  async function addConsumption(event: Event) {
+  async function uploadCsv(event: Event) {
     event.preventDefault()
     if (!hostel?.id) {
-      setNotice('Create a hostel before adding consumption.')
+      setNotice('Create a hostel before uploading data.')
       return
     }
-
-    const form = new FormData(event.currentTarget as HTMLFormElement)
+    const form = event.currentTarget as HTMLFormElement
+    const fileInput = form.querySelector('input[type="file"]') as HTMLInputElement
+    const file = fileInput?.files?.[0]
+    if (!file) {
+      setNotice('Select a CSV file first.')
+      return
+    }
+    const formData = new FormData()
+    formData.append('file', file)
     setLoadingAction('consumption')
+    setCsvUploadResult(null)
     try {
-      await apiRequest(`${API_PREFIX}/hostels/${hostel.id}/consumption`, {
+      const res = await fetch(`${API_BASE}${API_PREFIX}/hostels/${hostel.id}/consumption/upload-csv`, {
         method: 'POST',
-        body: JSON.stringify({
-          timestamp: new Date(String(form.get('timestamp'))).toISOString(),
-          bath_l: Number(form.get('bath_l')),
-          laundry_l: Number(form.get('laundry_l')),
-          drinking_l: Number(form.get('drinking_l')),
-          kitchen_l: Number(form.get('kitchen_l')),
-          other_l: Number(form.get('other_l')),
-        }),
+        body: formData,
       })
+      if (!res.ok) {
+        const err = await res.json().catch(() => null)
+        throw new Error(err?.detail?.message || err?.detail || `Upload failed (${res.status})`)
+      }
+      const data = await res.json()
+      setCsvUploadResult(data)
       await refreshRecords(hostel.id)
-      setNotice('Consumption record added. Run calculation when ready.')
-      ;(event.currentTarget as HTMLFormElement).reset()
+      setNotice(`CSV uploaded — ${data.inserted} rows inserted${data.skipped ? `, ${data.skipped} skipped` : ''}.`)
+      form.reset()
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Could not add consumption record.')
+      setNotice(error instanceof Error ? error.message : 'Could not upload CSV.')
     } finally {
       setLoadingAction('')
     }
@@ -367,9 +327,9 @@ export function App() {
         method: 'POST',
       })
       setCalculation(data)
-      await Promise.all([refreshDashboard(hostel.id), refreshCharts(hostel.id)])
-      setNotice('Calculation complete. Dashboard, analytics, and reports are ready.')
-      setView('dashboard')
+      setNotice('Calculation complete. Check the Reuse module for AI suggestions.')
+      await refreshRecords(hostel.id)
+      await refreshDashboard(hostel.id)
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not run calculation.')
     } finally {
@@ -462,7 +422,6 @@ export function App() {
 
           <div class="topbar-actions">
             <UserChip user={user} />
-            <span class={`live-pill ${liveStatus}`}>Live updates {liveStatus === 'live' ? 'active' : 'ready'}</span>
             <button
               class="primary-button"
               disabled={!canCalculate || loadingAction === 'calculation'}
@@ -479,6 +438,17 @@ export function App() {
 
         <div class={apiStatus === 'offline' ? 'notice danger' : 'notice'}>{notice}</div>
 
+        {view === 'dashboard' && (
+          <DashboardScreen
+            hostel={hostel}
+            summary={dashboardSummary}
+            chartData={chartData}
+            categoryBreakdown={categoryBreakdown}
+            onSetup={() => setView('setup')}
+            onAddData={() => setView('entry')}
+          />
+        )}
+        
         {view === 'setup' && (
           <SetupScreen isLoading={loadingAction === 'setup'} onSubmit={createHostel} />
         )}
@@ -488,24 +458,10 @@ export function App() {
             records={records}
             totalPreview={totalPreview}
             isLoading={loadingAction === 'consumption'}
-            onSubmit={addConsumption}
+            csvResult={csvUploadResult}
+            onSubmit={uploadCsv}
             onRunCalculation={runCalculation}
             canCalculate={canCalculate}
-          />
-        )}
-        {view === 'dashboard' && (
-          <DashboardScreen
-            summary={summary}
-            records={records}
-            canCalculate={canCalculate}
-            onRunCalculation={runCalculation}
-          />
-        )}
-        {view === 'analytics' && (
-          <AnalyticsScreen
-            categoryBreakdown={categoryBreakdown}
-            dailySeries={dailySeries}
-            weeklySeries={weeklySeries}
           />
         )}
         {view === 'reuse' && (
@@ -519,7 +475,7 @@ export function App() {
         {view === 'reports' && (
           <ReportsScreen
             canDownload={canUseCalculatedFeatures}
-            summary={summary}
+            calculation={calculation}
             onDownload={downloadReport}
           />
         )}
@@ -542,79 +498,77 @@ function LoadingPage() {
 
 function IntroPage({ onNext }: { onNext: () => void }) {
   return (
-    <section class="public-page">
-      <div class="landing-hero">
+    <section class="public-page animated-intro">
+      <div class="water-background">
+        <div class="bubble bubble-1"></div>
+        <div class="bubble bubble-2"></div>
+        <div class="bubble bubble-3"></div>
+        <div class="bubble bubble-4"></div>
+        <div class="bubble bubble-5"></div>
+        <div class="bubble bubble-6"></div>
+        <div class="bubble bubble-7"></div>
+        <div class="wave wave-back"></div>
+        <div class="wave wave-front"></div>
+      </div>
+      
+      <div class="landing-hero has-water-effect">
         <div class="landing-copy">
-          <p class="eyebrow">Campus water intelligence</p>
-          <h2>Track, calculate, and reduce hostel water usage from one dashboard.</h2>
+          <p class="eyebrow">Aqua Campus AI</p>
+          <h2>Smart Water Intelligence & Optimization</h2>
           <p>
-            Aqua Campus helps hostel administrators capture daily water consumption, calculate
-            per-student usage, visualize trends, discover reuse opportunities, and export reports
-            for review.
+            Seamlessly ingest hostel CSV data, track consumption via real-time dashboards, and leverage 
+            Cloudflare AI to generate actionable water-saving strategies.
           </p>
           <div class="landing-actions">
-            <button class="primary-button" onClick={onNext} type="button">
-              Get Started
+            <button class="primary-button large-cta" onClick={onNext} type="button">
+              Enter Secure Portal
             </button>
           </div>
         </div>
-        <div class="water-dashboard-preview" aria-label="Dashboard preview">
-          <div class="preview-card large">
-            <span>Total Water</span>
-            <strong>1,500 L</strong>
+        
+        <div class="water-feature-list floating-preview" aria-label="Feature descriptions">
+          <div class="feature-description-item">
+            <div class="feature-icon-small">📊</div>
+            <div>
+              <h4>Smart Consumption Tracking</h4>
+              <p>Monitor daily water usage across Bath, Laundry, and Kitchen categories with precision.</p>
+            </div>
           </div>
-          <div class="preview-card">
-            <span>Reuse Potential</span>
-            <strong>406 L</strong>
+          <div class="feature-description-item">
+            <div class="feature-icon-small">🤖</div>
+            <div>
+              <h4>AI-Powered Reuse Logic</h4>
+              <p>Leverage Cloudflare AI to discover hidden reuse opportunities and reduce campus waste.</p>
+            </div>
           </div>
-          <div class="preview-card">
-            <span>Efficiency</span>
-            <strong>95%</strong>
-          </div>
-          <div class="preview-bars">
-            <span style={{ height: '78%' }} />
-            <span style={{ height: '46%' }} />
-            <span style={{ height: '32%' }} />
-            <span style={{ height: '54%' }} />
-            <span style={{ height: '24%' }} />
+          <div class="feature-description-item">
+            <div class="feature-icon-small">📄</div>
+            <div>
+              <h4>Automated Reporting</h4>
+              <p>Generate instant sustainability reports in PDF and Excel formats for administrative review.</p>
+            </div>
           </div>
         </div>
+
+
       </div>
 
-      <div class="feature-grid">
-        <FeatureCard
-          label="Input"
-          title="Capture hostel usage"
-          text="Create a hostel, enter student count, and record category-wise water consumption."
-        />
-        <FeatureCard
-          label="Calculate"
-          title="Turn data into metrics"
-          text="Generate total usage, per-student usage, category split, reuse potential, and efficiency score."
-        />
-        <FeatureCard
-          label="Analyze"
-          title="Understand water patterns"
-          text="Use daily, weekly, and category charts to quickly identify where water is being used."
-        />
-        <FeatureCard
-          label="Improve"
-          title="Get reuse suggestions"
-          text="Receive rule-based recommendations for shower optimization, laundry reuse, kitchen loops, and audits."
-        />
-      </div>
-
-      <div class="workflow-panel">
-        <div>
-          <p class="eyebrow">How it works</p>
-          <h2>One guided flow from data entry to report export.</h2>
+      <div class="focused-features has-water-effect">
+        <div class="feature-item">
+          <div class="feature-icon">📊</div>
+          <h3>Automated CSV Ingestion</h3>
+          <p>Drop 30-day usage logs directly into the system for instant parsing and MongoDB storage.</p>
         </div>
-        <ol>
-          <li>Create hostel and add student count.</li>
-          <li>Add bath, laundry, drinking, kitchen, and other consumption.</li>
-          <li>Run smart calculations to unlock dashboard metrics.</li>
-          <li>Review charts, generate reuse suggestions, and download PDF or Excel reports.</li>
-        </ol>
+        <div class="feature-item">
+          <div class="feature-icon">🧠</div>
+          <h3>Cloudflare AI Insights</h3>
+          <p>Dynamic LLM-powered recommendations tailored strictly to your hostel's consumption data.</p>
+        </div>
+        <div class="feature-item">
+          <div class="feature-icon">📈</div>
+          <h3>Real-Time Visuals</h3>
+          <p>Interactive Recharts-driven dashboards plotting 30-day trends and category breakdowns.</p>
+        </div>
       </div>
     </section>
   )
@@ -634,25 +588,41 @@ function LoginPage({
   onLogin: () => void
 }) {
   return (
-    <section class="public-page login-page">
-      <div class="login-art">
-        <p class="eyebrow">Secure access</p>
-        <h1>Login with Google to enter the water dashboard.</h1>
+    <section class="public-page login-page animated-intro">
+      <div class="water-background">
+        <div class="bubble bubble-1"></div>
+        <div class="bubble bubble-2"></div>
+        <div class="bubble bubble-3"></div>
+        <div class="bubble bubble-4"></div>
+        <div class="bubble bubble-5"></div>
+        <div class="wave wave-back"></div>
+        <div class="wave wave-front"></div>
+      </div>
+      <div class="login-art has-water-effect">
+        <p class="eyebrow">Aqua Campus Secure</p>
+        <h2>Access Water Intelligence</h2>
         <p>
-          Authentication keeps hostel data entry, dashboards, reuse suggestions, and report exports
-          behind a signed-in session.
+          Join your campus community in tracking sustainability metrics and uncovering 
+          AI-driven water saving opportunities.
         </p>
-        <div class="login-steps">
-          <span>1. Read project overview</span>
-          <span>2. Sign in with Google</span>
-          <span>3. Open main dashboard features</span>
+        <div class="login-feature-points">
+          <div class="login-point"><span>🔐</span> Secure Data Management</div>
+          <div class="login-point"><span>📊</span> Personal Dashboard Access</div>
+          <div class="login-point"><span>🧠</span> Collaborative AI Audits</div>
         </div>
       </div>
 
-      <div class="login-card">
-        <span class="brand-icon">A</span>
-        <h2>Welcome back</h2>
-        <p>Use your Google account to continue to Aqua Campus Command Center.</p>
+
+      <div class="login-card high-end-card has-water-effect">
+        <div class="login-card-header">
+          <span class="brand-icon">A</span>
+          <span class="login-badge">Portal Entry</span>
+        </div>
+        
+        <div class="login-card-copy">
+          <h2>Welcome Back</h2>
+          <p>Please use your authorized Google account to access the Aqua Campus Command Center.</p>
+        </div>
 
         {!isConfigured && (
           <div class="notice danger">
@@ -668,17 +638,25 @@ function LoginPage({
           </div>
         )}
 
-        <button class="google-button" disabled={!isConfigured} onClick={onLogin} type="button">
-          <span>G</span>
-          Continue with Google
-        </button>
+        <div class="login-main-action">
+          <button class="google-button premium-google-btn" disabled={!isConfigured} onClick={onLogin} type="button">
+            <svg viewBox="0 0 24 24" width="24" height="24">
+              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
+              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.66l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+            </svg>
+            Continue with Google
+          </button>
+        </div>
 
-        <div class="login-actions">
-          <button class="ghost-button" onClick={onBack} type="button">
-            Back To Intro
+        <div class="login-footer">
+          <button class="ghost-button-slim" onClick={onBack} type="button">
+            ← Back to project overview
           </button>
         </div>
       </div>
+
     </section>
   )
 }
@@ -765,12 +743,27 @@ function SetupScreen({
   )
 }
 
+function downloadCsvTemplate() {
+  const header = 'timestamp,bath_l,laundry_l,kitchen_l,other_l'
+  const example1 = `${new Date().toISOString().slice(0, 16).replace('T', ' ')},3200,1100,700,120`
+  const example2 = `${new Date(Date.now() - 86400000).toISOString().slice(0, 16).replace('T', ' ')},2900,980,650,90`
+  const csv = [header, example1, example2].join('\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'water_consumption_template.csv'
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 function EntryScreen({
   hostel,
   records,
   totalPreview,
   isLoading,
   canCalculate,
+  csvResult,
   onSubmit,
   onRunCalculation,
 }: {
@@ -779,15 +772,24 @@ function EntryScreen({
   totalPreview: number
   isLoading: boolean
   canCalculate: boolean
+  csvResult: { inserted: number; skipped: number; errors: { row: number; error: string }[] } | null
   onSubmit: (event: Event) => void
   onRunCalculation: () => void
 }) {
+  const [filename, setFilename] = useState<string>('')
+
+  // Clear filename on successful upload response
+  useEffect(() => {
+    if (csvResult && !isLoading) {
+      setFilename('')
+    }
+  }, [csvResult, isLoading])
   return (
     <section class="content-stack">
       <div class="section-heading">
         <div>
           <p class="eyebrow">Step 2</p>
-          <h2>Add water consumption</h2>
+          <h2>Upload consumption data</h2>
           <p>{hostel ? `Recording data for ${hostel.name}` : 'Create a hostel first.'}</p>
         </div>
         <button class="primary-button" disabled={!canCalculate} onClick={onRunCalculation} type="button">
@@ -796,149 +798,68 @@ function EntryScreen({
       </div>
 
       <div class="screen-grid entry-grid">
-        <form class="form-card" onSubmit={onSubmit}>
-          <label>
-            Timestamp
-            <input name="timestamp" required type="datetime-local" defaultValue={toDateTimeLocal()} />
-          </label>
-          <div class="form-row">
-            <label>
-              Bath liters
-              <input name="bath_l" required min={0} type="number" defaultValue={3200} />
-            </label>
-            <label>
-              Laundry liters
-              <input name="laundry_l" required min={0} type="number" defaultValue={1100} />
-            </label>
+        <div class="form-card">
+          <div class="csv-instructions">
+            <p class="eyebrow">CSV format</p>
+            <p>Upload a CSV file with the columns below. One row per day or period.</p>
+            <div class="csv-schema">
+              <div class="schema-row required"><span>timestamp</span><small>Required — ISO date or YYYY-MM-DD HH:MM</small></div>
+              <div class="schema-row required"><span>bath_l</span><small>Required — bath water in litres</small></div>
+              <div class="schema-row required"><span>laundry_l</span><small>Required — laundry water in litres</small></div>
+              <div class="schema-row required"><span>kitchen_l</span><small>Required — kitchen water in litres</small></div>
+              <div class="schema-row"><span>other_l</span><small>Optional — defaults to 0</small></div>
+            </div>
+            <button class="ghost-button" onClick={downloadCsvTemplate} type="button">
+              ↓ Download template
+            </button>
           </div>
-          <div class="form-row">
-            <label>
-              Drinking liters
-              <input name="drinking_l" required min={0} type="number" defaultValue={450} />
+
+          <form class="csv-upload-form" onSubmit={onSubmit}>
+            <label class="file-drop-zone">
+              <input 
+                accept=".csv" 
+                name="file" 
+                type="file" 
+                onChange={(e) => {
+                  const file = (e.target as HTMLInputElement).files?.[0]
+                  setFilename(file ? file.name : '')
+                }}
+              />
+              <span class="file-drop-label">
+                <strong>{filename || 'Choose a CSV file'}</strong>
+                <small>{filename ? 'File ready to upload' : 'or drag and drop here'}</small>
+              </span>
             </label>
-            <label>
-              Kitchen liters
-              <input name="kitchen_l" required min={0} type="number" defaultValue={700} />
-            </label>
-          </div>
-          <label>
-            Other liters
-            <input name="other_l" min={0} type="number" defaultValue={120} />
-          </label>
-          <button class="primary-button wide" disabled={!hostel || isLoading} type="submit">
-            {isLoading ? 'Adding record...' : 'Add Consumption Record'}
-          </button>
-        </form>
+            <button class="primary-button wide" disabled={!hostel || !filename || isLoading} type="submit">
+              {isLoading ? 'Uploading...' : 'Upload CSV'}
+            </button>
+          </form>
+
+          {csvResult && (
+            <div class={`csv-result ${csvResult.skipped > 0 ? 'has-errors' : 'success'}`}>
+              <p><strong>{csvResult.inserted}</strong> rows inserted · <strong>{csvResult.skipped}</strong> skipped</p>
+              {csvResult.errors.length > 0 && (
+                <ul class="csv-errors">
+                  {csvResult.errors.map((e) => (
+                    <li key={e.row}><span>Row {e.row}</span> {e.error}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
 
         <div class="insight-card">
           <p class="eyebrow">Current all-time total</p>
           <strong>{formatLiters(totalPreview)}</strong>
           <span>{records.length} consumption records saved</span>
           <p>
-            Add at least one record and run calculation to unlock dashboard metrics, analytics,
-            suggestions, and reports.
+            Upload at least one CSV and run calculation to unlock reuse suggestions and reports.
           </p>
         </div>
       </div>
 
       <RecordsTable records={records} />
-    </section>
-  )
-}
-
-function DashboardScreen({
-  summary,
-  records,
-  canCalculate,
-  onRunCalculation,
-}: {
-  summary: DashboardSummary | null
-  records: ConsumptionRecord[]
-  canCalculate: boolean
-  onRunCalculation: () => void
-}) {
-  if (!summary) {
-    return (
-      <EmptyState
-        actionLabel="Run Calculation"
-        canAct={canCalculate}
-        description="Add student count and consumption data, then run calculation to populate live dashboard metrics."
-        title="No calculation yet"
-        onAction={onRunCalculation}
-      />
-    )
-  }
-
-  return (
-    <section class="content-stack">
-      <div class="metric-grid">
-        <MetricCard label="Total consumption" value={formatLiters(summary.total_consumption_l)} tone="blue" />
-        <MetricCard label="Per student usage" value={`${formatNumber(summary.per_student_l)} L`} tone="teal" />
-        <MetricCard label="Reuse potential" value={formatLiters(summary.reuse_potential_l)} tone="green" />
-        <MetricCard label="Efficiency score" value={`${formatNumber(summary.efficiency_score)}%`} tone="amber" />
-      </div>
-
-      <div class="screen-grid dashboard-grid">
-        <div class="panel-card">
-          <div class="section-heading compact">
-            <div>
-              <p class="eyebrow">Category split</p>
-              <h2>Where water is going</h2>
-            </div>
-          </div>
-          <CategoryBars data={summary.category_split_pct} />
-        </div>
-
-        <div class="panel-card spotlight-card">
-          <p class="eyebrow">Last updated</p>
-          <h2>{formatDate(summary.last_updated_at)}</h2>
-          <p>
-            Dashboard summaries refresh automatically while this screen is open.
-          </p>
-        </div>
-      </div>
-
-      <RecordsTable records={records.slice(0, 6)} />
-    </section>
-  )
-}
-
-function AnalyticsScreen({
-  dailySeries,
-  weeklySeries,
-  categoryBreakdown,
-}: {
-  dailySeries: DailyPoint[]
-  weeklySeries: WeeklyPoint[]
-  categoryBreakdown: CategoryBreakdown | null
-}) {
-  const categoryData = categoryBreakdown?.split_pct || {}
-
-  return (
-    <section class="content-stack">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">Charts</p>
-          <h2>Usage analytics</h2>
-          <p>Daily, weekly, and category insights generated from saved hostel usage data.</p>
-        </div>
-      </div>
-
-      <div class="screen-grid dashboard-grid">
-        <div class="panel-card">
-          <p class="eyebrow">Daily usage</p>
-          <BarChart data={dailySeries.map((item) => ({ label: item.date.slice(5), value: item.total_l }))} />
-        </div>
-        <div class="panel-card">
-          <p class="eyebrow">Weekly usage</p>
-          <BarChart data={weeklySeries.map((item) => ({ label: `W${item.week}`, value: item.total_l }))} />
-        </div>
-      </div>
-
-      <div class="panel-card">
-        <p class="eyebrow">Category breakdown</p>
-        <CategoryBars data={categoryData} />
-      </div>
     </section>
   )
 }
@@ -1001,11 +922,11 @@ function ReuseScreen({
 
 function ReportsScreen({
   canDownload,
-  summary,
+  calculation,
   onDownload,
 }: {
   canDownload: boolean
-  summary: DashboardSummary | null
+  calculation: CalculationResult | null
   onDownload: (type: 'pdf' | 'xlsx') => void
 }) {
   return (
@@ -1034,9 +955,9 @@ function ReportsScreen({
       </div>
 
       <div class="summary-strip">
-        <MetricCard label="Total" value={formatLiters(summary?.total_consumption_l)} tone="blue" />
-        <MetricCard label="Per student" value={`${formatNumber(summary?.per_student_l)} L`} tone="teal" />
-        <MetricCard label="Reuse potential" value={formatLiters(summary?.reuse_potential_l)} tone="green" />
+        <MetricCard label="Total" value={formatLiters(calculation?.total_l)} tone="blue" />
+        <MetricCard label="Per student" value={`${formatNumber(calculation?.per_student_l)} L`} tone="teal" />
+        <MetricCard label="Reuse potential" value={formatLiters(calculation?.reuse_potential_l)} tone="green" />
       </div>
     </section>
   )
@@ -1096,46 +1017,7 @@ function RecordsTable({ records }: { records: ConsumptionRecord[] }) {
   )
 }
 
-function CategoryBars({ data }: { data: Record<string, number> }) {
-  const entries = Object.entries(data)
 
-  if (entries.length === 0) {
-    return <p class="muted">No category data yet.</p>
-  }
-
-  return (
-    <div class="category-bars">
-      {entries.map(([key, value]) => (
-        <div class="category-row" key={key}>
-          <div>
-            <span>{categoryLabels[key as keyof typeof categoryLabels] || key}</span>
-            <strong>{formatNumber(value)}%</strong>
-          </div>
-          <progress max={100} value={value} />
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function BarChart({ data }: { data: Array<{ label: string; value: number }> }) {
-  const max = Math.max(...data.map((item) => item.value), 1)
-
-  if (data.length === 0) {
-    return <p class="muted">No chart data yet.</p>
-  }
-
-  return (
-    <div class="bar-chart">
-      {data.map((item) => (
-        <div class="bar-column" key={item.label}>
-          <span style={{ height: `${Math.max(8, (item.value / max) * 100)}%` }} />
-          <small>{item.label}</small>
-        </div>
-      ))}
-    </div>
-  )
-}
 
 function EmptyState({
   title,
@@ -1182,5 +1064,133 @@ function ReportCard({
         Download
       </button>
     </article>
+  )
+}
+
+function DashboardScreen({
+  hostel,
+  summary,
+  chartData,
+  categoryBreakdown,
+  onSetup,
+  onAddData,
+}: {
+  hostel: Hostel | null
+  summary: any
+  chartData: any
+  categoryBreakdown: any
+  onSetup: () => void
+  onAddData: () => void
+}) {
+  if (!hostel) {
+    return (
+      <section class="content-stack">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Welcome</p>
+            <h2>Water Intelligence Dashboard</h2>
+          </div>
+        </div>
+        <div class="insight-card empty-state">
+          <h3>No Hostel Configured</h3>
+          <p>You need to set up a hostel profile to begin analyzing data.</p>
+          <button class="primary-button" onClick={onSetup}>Go to Setup</button>
+        </div>
+      </section>
+    )
+  }
+
+  if (!summary || !chartData) {
+    return (
+      <section class="content-stack">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Overview</p>
+            <h2>{hostel.name} Dashboard</h2>
+          </div>
+        </div>
+        <div class="insight-card empty-state">
+          <h3>No Data Calculated Yet</h3>
+          <p>Please upload consumption data and run a calculation to view your dashboard insights.</p>
+          <button class="primary-button" onClick={onAddData}>Add Data</button>
+        </div>
+      </section>
+    )
+  }
+
+  const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6']
+  const pieData = categoryBreakdown?.split_l ? Object.entries(categoryBreakdown.split_l).map(([name, value], i) => ({ name, value, color: COLORS[i % COLORS.length] })) : []
+
+  return (
+    <section class="content-stack">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Overview</p>
+          <h2>{hostel.name} Dashboard</h2>
+          <p>Real-time analytics and efficiency metrics.</p>
+        </div>
+        <div class="efficiency-badge">
+          <span>Score: {summary.efficiency_score} / 100</span>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <p class="eyebrow">Total Consumption</p>
+          <h3>{formatLiters(summary.total_consumption_l)}</h3>
+        </div>
+        <div class="kpi-card">
+          <p class="eyebrow">Per Student (Avg)</p>
+          <h3>{formatNumber(summary.per_student_l)} L</h3>
+        </div>
+        <div class="kpi-card">
+          <p class="eyebrow">Reuse Potential</p>
+          <h3 class="highlight-green">{formatLiters(summary.reuse_potential_l)}</h3>
+        </div>
+      </div>
+
+      <div class="charts-grid">
+        <div class="chart-container span-2">
+          <h3>30-Day Trend</h3>
+          <div style={{ width: '100%', height: 300 }}>
+            <ResponsiveContainer>
+              <LineChart data={chartData.series}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="date" tick={{fontSize: 12}} stroke="#94a3b8" />
+                <YAxis tick={{fontSize: 12}} stroke="#94a3b8" />
+                <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                <Legend />
+                <Line type="monotone" dataKey="total_l" stroke="#0ea5e9" strokeWidth={3} dot={{r: 4, strokeWidth: 2}} activeDot={{r: 6}} name="Daily Consumption (L)" />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div class="chart-container">
+          <h3>Category Breakdown</h3>
+          <div style={{ width: '100%', height: 300 }}>
+            <ResponsiveContainer>
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={80}
+                  paddingAngle={5}
+                  dataKey="value"
+                >
+                  {pieData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value) => formatLiters(value as number)} />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+    </section>
   )
 }

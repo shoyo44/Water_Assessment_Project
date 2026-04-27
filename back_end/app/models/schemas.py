@@ -42,11 +42,10 @@ class ConsumptionCreate(BaseModel):
     timestamp: datetime = Field(default_factory=utc_now)
     bath_l: float = Field(ge=0)
     laundry_l: float = Field(ge=0)
-    drinking_l: float = Field(ge=0)
     kitchen_l: float = Field(ge=0)
     other_l: float = Field(default=0, ge=0)
 
-    @field_validator("bath_l", "laundry_l", "drinking_l", "kitchen_l", "other_l")
+    @field_validator("bath_l", "laundry_l", "kitchen_l", "other_l")
     @classmethod
     def round_values(cls, value: float) -> float:
         return round(value, 3)
@@ -58,7 +57,6 @@ class ConsumptionResponse(BaseModel):
     timestamp: datetime
     bath_l: float
     laundry_l: float
-    drinking_l: float
     kitchen_l: float
     other_l: float
     total_l: float

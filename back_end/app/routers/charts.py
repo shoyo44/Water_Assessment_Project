@@ -93,7 +93,6 @@ async def category_breakdown(hostel_id: str, db: AsyncIOMotorDatabase = Depends(
                 "_id": "$hostel_id",
                 "bath_l": {"$sum": "$bath_l"},
                 "laundry_l": {"$sum": "$laundry_l"},
-                "drinking_l": {"$sum": "$drinking_l"},
                 "kitchen_l": {"$sum": "$kitchen_l"},
                 "other_l": {"$sum": "$other_l"},
                 "total_l": {"$sum": "$total_l"},
@@ -105,15 +104,14 @@ async def category_breakdown(hostel_id: str, db: AsyncIOMotorDatabase = Depends(
         return {
             "hostel_id": hostel_id,
             "total_l": 0,
-            "split_l": {"bath": 0, "laundry": 0, "drinking": 0, "kitchen": 0, "other": 0},
-            "split_pct": {"bath": 0, "laundry": 0, "drinking": 0, "kitchen": 0, "other": 0},
+            "split_l": {"bath": 0, "laundry": 0, "kitchen": 0, "other": 0},
+            "split_pct": {"bath": 0, "laundry": 0, "kitchen": 0, "other": 0},
         }
     row = agg[0]
     total = float(row["total_l"]) if row["total_l"] else 0.0
     split_l = {
         "bath": round(float(row["bath_l"]), 3),
         "laundry": round(float(row["laundry_l"]), 3),
-        "drinking": round(float(row["drinking_l"]), 3),
         "kitchen": round(float(row["kitchen_l"]), 3),
         "other": round(float(row["other_l"]), 3),
     }

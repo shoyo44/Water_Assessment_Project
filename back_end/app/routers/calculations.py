@@ -48,7 +48,6 @@ async def run_calculation(
                 "total_l": {"$sum": "$total_l"},
                 "bath_l": {"$sum": "$bath_l"},
                 "laundry_l": {"$sum": "$laundry_l"},
-                "drinking_l": {"$sum": "$drinking_l"},
                 "kitchen_l": {"$sum": "$kitchen_l"},
                 "other_l": {"$sum": "$other_l"},
                 "last_updated_at": {"$max": "$timestamp"},
@@ -73,7 +72,6 @@ async def run_calculation(
     category_split_pct = {
         "bath": round(float(summary["bath_l"]) * 100 / total_l, 2),
         "laundry": round(float(summary["laundry_l"]) * 100 / total_l, 2),
-        "drinking": round(float(summary["drinking_l"]) * 100 / total_l, 2),
         "kitchen": round(float(summary["kitchen_l"]) * 100 / total_l, 2),
         "other": round(float(summary["other_l"]) * 100 / total_l, 2),
     }
